@@ -1,1 +1,64 @@
+name: "Run Selenium Grid Tests"
+description: "Shared action to run Selenium tests on Selenium Grid"
+author: "Your Name"
+
+inputs:
+  python-version:
+    description: "Python version to use"
+    required: false
+    default: "3.11"
+  requirements:
+    description: "Path to requirements.txt"
+    required: false
+    default: "requirements.txt"
+  test-command:
+    description: "Test command to execute"
+    required: false
+    default: "pytest --maxfail=1 --disable-warnings --html=report.html"
+
+runs:
+  using: "composite"
+  steps:
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        pip install -r ${{ inputs.requirements }}
+
+    - name: Add project root to PYTHONPATH
+      shell: bash
+      run: |
+        echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
+
+    - name: Wait for Selenium Grid to be ready
+      shell: bash
+      run: |
+        echo "Waiting for Selenium Grid..."
+        for i in {1..40}; do
+          if curl -s http://localhost:4444/ui | grep -q "Selenium Grid"; then
+            echo "Grid is up!"
+            break
+          fi
+          echo "Still waiting..."
+          sleep 3
+        done
+
+    - name: Run Selenium tests
+      shell: bash
+      run: ${{ inputs.test-command }}
+
+    - name: Upload Selenium Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: selenium-artifacts
+        path: |
+          report.html
+          logs/
+          screenshots/
+        retention-days: 7
 
