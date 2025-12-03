@@ -19,7 +19,7 @@ jobs:
       # Authenticate to OCI registry (GHCR example)
       - name: Login to GitHub Container Registry
         run: |
-          echo ${{ secrets.GITHUB_TOKEN }} |
+          echo ${{ test2 }} |
           oras login ghcr.io -u ${{ github.actor }} --password-stdin
 
       # Pull Selenium Hub image from ORAS/OCI registry
