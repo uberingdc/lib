@@ -1,77 +1,125 @@
-name: Selenium Grid Using ORAS
+name: Selenium Grid via ORAS
 
-on: [workflow_dispatch, push]
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  run-grid:
+  selenium-grid:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repo
+      # -----------------------
+      # Checkout Repo
+      # -----------------------
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # Install ORAS
-      - name: Install ORAS CLI
+      # -----------------------
+      # Install ORAS CLI
+      # -----------------------
+      - name: Install ORAS
         run: |
-          curl -sSL https://oras.land/install.sh | sh
-          sudo mv oras /usr/local/bin/
+          curl -sSfL https://github.com/oras-project/oras/releases/latest/download/oras_linux_amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin oras
 
-      # Authenticate to OCI registry (GHCR example)
-      - name: Login to GitHub Container Registry
+      # -----------------------
+      # Login to GHCR using ORAS
+      # -----------------------
+      - name: Login to GHCR with ORAS
         run: |
-          echo ${{ test2 }} |
-          oras login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io \
+            -u "${{ github.actor }}" \
+            --password-stdin
 
-      # Pull Selenium Hub image from ORAS/OCI registry
-      - name: ORAS Pull Selenium Grid Hub Image
+      # -----------------------
+      # Pull Selenium Grid (Hub + Nodes) from ORAS
+      # Example repo: ghcr.io/<OWNER>/selenium-grid
+      # -----------------------
+      - name: Pull Selenium Grid Hub (ORAS artifact)
         run: |
-          oras pull ghcr.io/<owner>/<repo>/selenium-hub:latest \
-            --output /tmp/selenium-hub.tar
+          oras pull ghcr.io/${{ github.repository_owner }}/selenium-hub:latest \
+            --output /tmp/selenium-hub
 
-      # Load image into Docker
-      - name: Load Hub image into Docker
+      - name: Pull Selenium Chrome Node
         run: |
-          docker load -i /tmp/selenium-hub.tar
+          oras pull ghcr.io/${{ github.repository_owner }}/selenium-node-chrome:latest \
+            --output /tmp/selenium-node-chrome
 
-      # Start Selenium Hub
+      - name: Pull Selenium Firefox Node
+        run: |
+          oras pull ghcr.io/${{ github.repository_owner }}/selenium-node-firefox:latest \
+            --output /tmp/selenium-node-firefox
+
+      # -----------------------
+      # Start Selenium Grid Containers
+      # -----------------------
       - name: Start Selenium Hub
         run: |
-          docker run -d --name selenium-hub -p 4444:4444 selenium-hub:latest
+          docker run -d --name selenium-hub -p 4444:4444 -p 4443:4443 \
+            -v /tmp/selenium-hub:/opt/selenium \
+            selenium/hub:latest
 
-      # Pull Node Chrome image
-      - name: ORAS Pull Selenium Node Chrome
+      - name: Start Chrome Node
         run: |
-          oras pull ghcr.io/<owner>/<repo>/selenium-node-chrome:latest \
-            --output /tmp/node-chrome.tar
-
-      - name: Load Chrome node image
-        run: docker load -i /tmp/node-chrome.tar
-
-      # Start Node Chrome
-      - name: Start Selenium Node Chrome
-        run: |
-          docker run -d \
-            --name node-chrome \
-            --net=host \
-            -e SE_EVENT_BUS_HOST=localhost \
+          docker run -d --name chrome-node --shm-size="2g" \
+            --link selenium-hub:hub \
+            -v /tmp/selenium-node-chrome:/opt/selenium \
+            -e SE_EVENT_BUS_HOST=hub \
             -e SE_EVENT_BUS_PUBLISH_PORT=4442 \
             -e SE_EVENT_BUS_SUBSCRIBE_PORT=4443 \
-            selenium-node-chrome:latest
+            selenium/node-chrome:latest
 
-      # Wait for Selenium Hub
-      - name: Wait for Grid Health
+      - name: Start Firefox Node
         run: |
-          for i in {1..30}; do
-            if curl -s http://localhost:4444/status | jq '.value.ready' | grep true; then
-              echo "Grid is ready!";
-              exit 0;
+          docker run -d --name firefox-node --shm-size="2g" \
+            --link selenium-hub:hub \
+            -v /tmp/selenium-node-firefox:/opt/selenium \
+            -e SE_EVENT_BUS_HOST=hub \
+            -e SE_EVENT_BUS_PUBLISH_PORT=4442 \
+            -e SE_EVENT_BUS_SUBSCRIBE_PORT=4443 \
+            selenium/node-firefox:latest
+
+      # -----------------------
+      # Wait for Grid
+      # -----------------------
+      - name: Wait for Selenium Grid to be Ready
+        run: |
+          for i in {1..20}; do
+            if curl -s http://localhost:4444/status | jq -e '.value.ready' >/dev/null; then
+              echo "Grid is ready!"
+              exit 0
             fi
-            echo "Waiting for Selenium Grid..."
-            sleep 2
+            echo "Waiting for Grid..."
+            sleep 3
           done
-          exit 1
+          echo "Grid not ready in time!" && exit 1
 
-      # Your tests (Java, Python, etc.)
-      - name: Run Tests
+      # -----------------------
+      # Run your tests
+      # -----------------------
+      - name: Run Java Tests
+        if: always()
+        run: mvn test
+
+      - name: Run Python Tests
+        if: always()
         run: |
-          echo "Run your test runner here"
+          pip install -r requirements.txt
+          pytest -s --disable-warnings
+
+      # -----------------------
+      # Upload test reports (optional)
+      # -----------------------
+      - name: Upload Test Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            target/surefire-reports
+            test-reports
