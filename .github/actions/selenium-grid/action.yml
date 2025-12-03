@@ -16,49 +16,81 @@ inputs:
     required: false
     default: "pytest --maxfail=1 --disable-warnings --html=report.html"
 
-runs:
-  using: "composite"
-  steps:
+permissions:
+  contents: read
+  packages: write
+  
+jobs:
+  selenium-grid:
+    runs-on: ubuntu-latest
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ inputs.python-version }}
+    services:
+      selenium-hub:
+        image: selenium/hub:4.23.0
+        ports:
+          - 4444:4444
 
-    - name: Install dependencies
-      shell: bash
-      run: |
-        pip install -r ${{ inputs.requirements }}
+      chrome-node:
+        image: selenium/node-chrome:4.23.0
+        env:
+          SE_EVENT_BUS_HOST: selenium-hub
+          SE_EVENT_BUS_PUBLISH_PORT: 4442
+          SE_EVENT_BUS_SUBSCRIBE_PORT: 4443
+        options: >-
+          --shm-size="2g"
 
-    - name: Add project root to PYTHONPATH
-      shell: bash
-      run: |
-        echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
+      firefox-node:
+        image: selenium/node-firefox:4.23.0
+        env:
+          SE_EVENT_BUS_HOST: selenium-hub
+          SE_EVENT_BUS_PUBLISH_PORT: 4442
+          SE_EVENT_BUS_SUBSCRIBE_PORT: 4443
+        options: >-
+          --shm-size="2g"
 
-    - name: Wait for Selenium Grid to be ready
-      shell: bash
-      run: |
-        echo "Waiting for Selenium Grid..."
-        for i in {1..40}; do
-          if curl -s http://localhost:4444/ui | grep -q "Selenium Grid"; then
-            echo "Grid is up!"
-            break
-          fi
-          echo "Still waiting..."
-          sleep 3
-        done
+      edge-node:
+        image: selenium/node-edge:4.23.0
+        env:
+          SE_EVENT_BUS_HOST: selenium-hub
+          SE_EVENT_BUS_PUBLISH_PORT: 4442
+          SE_EVENT_BUS_SUBSCRIBE_PORT: 4443
+        options: >-
+          --shm-size="2g"
 
-    - name: Run Selenium tests
-      shell: bash
-      run: ${{ inputs.test-command }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Upload Selenium Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: selenium-artifacts
-        path: |
-          report.html
-          logs/
-          screenshots/
-        retention-days: 7
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Wait for Selenium Grid
+        run: |
+          echo "Waiting for Selenium Grid..."
+          for i in {1..30}; do
+            if curl -s http://localhost:4444/ui | grep -q "Selenium Grid"; then
+              echo "Grid is up!"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run Selenium Tests
+        run: |
+          pytest --maxfail=1 --disable-warnings --html=report.html
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: selenium-artifacts
+          path: |
+            report.html
+            logs/
+            screenshots/
+          retention-days: 7
